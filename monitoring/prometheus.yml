@@ -16,6 +16,7 @@ rule_files:
   - "alerts/backup.yml"
   - "alerts/transaction_queue.yml"
   - "alerts/leader_election.yml"
+  - "alerts/log_shipping.yml"
 
 scrape_configs:
   - job_name: stellaredupay
@@ -34,6 +35,21 @@ scrape_configs:
           - "host.docker.internal:5000"
 
   # ── Infrastructure exporters ─────────────────────────────────────────────
+
+  # Fluent Bit self-metrics (log shipping pipeline health)
+  # Covers: input bytes read, output records delivered, retry/error counts,
+  # and buffer usage. Essential for detecting log collection gaps.
+  # In Kubernetes this is discovered automatically via pod annotations;
+  # for local Docker Compose, point at the host port if Fluent Bit is run
+  # as a sidecar or standalone container.
+  - job_name: fluent-bit
+    static_configs:
+      - targets:
+          - "host.docker.internal:2020"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "fluent-bit"
 
   # MongoDB metrics via percona/mongodb_exporter
   # Covers: connection pool utilization, operation counters, replication lag,

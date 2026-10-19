@@ -1,0 +1,26 @@
+---
+# NetworkPolicy restricting inbound access to Fluent Bit's self-metrics
+# endpoint to Prometheus only. Reduces exposure of the pod metadata
+# enrichment output on the metrics port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels:
+    app: fluent-bit
+spec:
+  podSelector:
+    matchLabels:
+      app: fluent-bit
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow metrics scraping from the prometheus namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 2020

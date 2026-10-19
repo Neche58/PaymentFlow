@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+  labels:
+    app: fluent-bit
+data:
+  # ── Main service configuration ────────────────────────────────────────────
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Daemon        Off
+        Log_Level     info
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+        # Expose built-in Prometheus metrics at /api/v1/metrics/prometheus
+        Metrics_Endpoint /api/v1/metrics/prometheus
+
+    # ── INPUT: tail all pod logs from the node ────────────────────────────
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        # Exclude Fluent Bit's own logs to avoid feedback loops
+        Exclude_Path      /var/log/containers/fluent-bit*
+        Parser            docker
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+        Read_from_Head    False
+
+    # ── FILTER: enrich with Kubernetes pod/namespace metadata ────────────
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        Keep_Log            Off
+        Annotations         Off
+        Labels              On
+
+    # ── FILTER: parse structured JSON from the app's Winston logger ───────
+    # The backend emits JSON on stdout; after Merge_Log the fields are
+    # promoted to top-level, so `level`, `msg`, `correlationId`, `schoolId`,
+    # etc. are directly queryable in Loki / Elasticsearch.
+    [FILTER]
+        Name    modify
+        Match   kube.*
+        # Rename Winston's `level` to `log_level` to avoid collisions with
+        # Fluent Bit's own `level` field in some output plugins.
+        Rename  level  log_level
+
+    # ── FILTER: retention tag based on log level ──────────────────────────
+    # Adds a `retention_policy` field consumed by the output plugin or by
+    # a downstream Index Lifecycle Management / Loki stream selector.
+    [FILTER]
+        Name    modify
+        Match   kube.*
+        # Default retention for anything not matched below
+        Add     retention_policy  14d
+
+    [FILTER]
+        Name    grep
+        Match   kube.*
+        # Tag DEBUG records with 3-day retention
+        Regex   log_level  debug
+
+    # We run separate retention-tagged pipelines via rewrite_tag so each
+    # level gets its own Loki stream (enables per-stream retention rules).
+    [FILTER]
+        Name          rewrite_tag
+        Match         kube.*
+        Rule          $log_level ^debug$   kube.debug   false
+        Rule          $log_level ^info$    kube.info    false
+        Rule          $log_level ^warn$    kube.warn    false
+        Rule          $log_level ^error$   kube.error   false
+        Emitter_Name  retention_router
+
+    # ── OUTPUT: Loki (primary) ─────────────────────────────────────────────
+    # Labels drive Loki stream selection and per-stream retention policies.
+    # Set LOKI_URL, LOKI_USERNAME, LOKI_PASSWORD in the fluent-bit-secrets
+    # Secret (see fluent-bit-daemonset.yaml envFrom).
+    [OUTPUT]
+        Name            loki
+        Match           kube.debug
+        Host            ${LOKI_HOST}
+        Port            ${LOKI_PORT}
+        HTTP_User       ${LOKI_USERNAME}
+        HTTP_Passwd     ${LOKI_PASSWORD}
+        Labels          job=paymentflow, level=debug, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name']
+        Label_Keys      $correlationId,$schoolId,$studentId
+        Line_Format     json
+        # DEBUG: 3-day retention (enforced by a Loki retention rule keyed on `level=debug`)
+        tenant_id       paymentflow
+
+    [OUTPUT]
+        Name            loki
+        Match           kube.info
+        Host            ${LOKI_HOST}
+        Port            ${LOKI_PORT}
+        HTTP_User       ${LOKI_USERNAME}
+        HTTP_Passwd     ${LOKI_PASSWORD}
+        Labels          job=paymentflow, level=info, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name']
+        Label_Keys      $correlationId,$schoolId,$studentId
+        Line_Format     json
+        # INFO: 14-day retention
+        tenant_id       paymentflow
+
+    [OUTPUT]
+        Name            loki
+        Match           kube.warn
+        Host            ${LOKI_HOST}
+        Port            ${LOKI_PORT}
+        HTTP_User       ${LOKI_USERNAME}
+        HTTP_Passwd     ${LOKI_PASSWORD}
+        Labels          job=paymentflow, level=warn, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name']
+        Label_Keys      $correlationId,$schoolId,$studentId
+        Line_Format     json
+        # WARN: 90-day retention
+        tenant_id       paymentflow
+
+    [OUTPUT]
+        Name            loki
+        Match           kube.error
+        Host            ${LOKI_HOST}
+        Port            ${LOKI_PORT}
+        HTTP_User       ${LOKI_USERNAME}
+        HTTP_Passwd     ${LOKI_PASSWORD}
+        Labels          job=paymentflow, level=error, namespace=$kubernetes['namespace_name'], pod=$kubernetes['pod_name']
+        Label_Keys      $correlationId,$schoolId,$studentId
+        Line_Format     json
+        # ERROR: 90-day retention
+        tenant_id       paymentflow
+
+  # ── Parser definitions ─────────────────────────────────────────────────
+  parsers.conf: |
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+        # Promote the nested `log` field (raw container output) for re-parsing
+        Decode_Field_As   escaped_utf8  log  do_next
+        Decode_Field_As   json          log
+
+    [PARSER]
+        Name        paymentflow_json
+        Format      json
+        Time_Key    ts
+        Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+        Time_Keep   On

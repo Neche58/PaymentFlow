@@ -1,0 +1,100 @@
+groups:
+  - name: log_shipping
+    interval: 60s
+    rules:
+      # ── Fluent Bit input stall ─────────────────────────────────────────────
+      # fluentbit_input_bytes_total is emitted by the built-in Fluent Bit
+      # Prometheus exporter (HTTP_Server On, port 2020). A sustained zero
+      # read rate on the kube.* input tag means log collection has stalled
+      # on that node — likely a crashed Fluent Bit process or a failed mount.
+      - alert: FluentBitInputStalled
+        expr: |
+          sum(rate(fluentbit_input_bytes_total{name=~"kube.*"}[5m])) == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fluent Bit input has stalled — logs may be lost"
+          description: >
+            No bytes have been read from the kube.* input for 5 minutes.
+            Check that Fluent Bit DaemonSet pods are running on all nodes
+            (kubectl -n logging get pods -o wide) and that /var/log/containers
+            is reachable from the pod.
+
+      # ── Fluent Bit output errors ───────────────────────────────────────────
+      # fluentbit_output_errors_total rising means records are being dropped
+      # instead of forwarded to Loki — log gaps will appear in dashboards.
+      - alert: FluentBitOutputErrors
+        expr: |
+          rate(fluentbit_output_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fluent Bit is dropping records — Loki output errors"
+          description: >
+            Fluent Bit is failing to deliver log records to Loki
+            (output error rate: {{ $value | printf \"%.2f\" }}/s).
+            Verify Loki connectivity and credentials in the fluent-bit-secrets
+            Secret. Check `kubectl -n logging logs -l app=fluent-bit`.
+
+      # ── Repeated ERROR logs from the payment backend ──────────────────────
+      # Uses Loki's log-count metric exposed via the Loki metrics ruler, or
+      # alternatively via the loki_ruler metrics if log-based alerting is
+      # configured in Loki. This rule fires on Prometheus metrics derived from
+      # Loki log volume.
+      #
+      # If you use Loki's native ruler for log-based alerting, move this rule
+      # to your Loki ruler config and use LogQL instead:
+      #
+      #   sum(rate({job="paymentflow", level="error"}[5m])) > 2
+      #
+      - alert: PaymentBackendRepeatedErrors
+        expr: |
+          sum(rate(fluentbit_output_records_total{name=~".*loki.*error.*"}[5m])) > 2
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Repeated ERROR log lines from PaymentFlow backend"
+          description: >
+            More than 2 ERROR-level log records per second are being shipped
+            from the PaymentFlow backend (rate: {{ $value | printf \"%.2f\" }}/s).
+            Query Loki for details:
+              {job="paymentflow", level="error"} | json | line_format "{{.msg}}"
+
+      # ── Auth failure spike ─────────────────────────────────────────────────
+      # Auth failures are logged at WARN by the auth middleware. A spike
+      # indicates either a credential stuffing attack or a misconfigured client.
+      - alert: AuthFailureSpike
+        expr: |
+          sum(rate(fluentbit_output_records_total{name=~".*loki.*warn.*"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated WARN log rate — possible auth failure spike"
+          description: >
+            WARN-level log rate exceeds 10 records/s for 2 minutes.
+            Check Loki for auth failure patterns:
+              {job="paymentflow", level="warn"} | json | msg =~ "(?i)auth|unauthori[sz]ed|forbidden"
+
+      # ── Payment processing errors ──────────────────────────────────────────
+      # Payment-specific errors are enriched with `schoolId` and `studentId`
+      # fields by the Winston logger. This alert catches sustained payment
+      # errors that may not surface immediately through the SLO burn rate.
+      - alert: PaymentProcessingErrors
+        expr: |
+          sum(rate(fluentbit_output_records_total{name=~".*loki.*error.*"}[10m])) > 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sustained payment processing errors in logs"
+          description: >
+            ERROR-level log records have been shipping at >1/s for 5 minutes.
+            This may indicate a Stellar Horizon connectivity issue, MongoDB
+            write failures, or payment validation bugs.
+            Query Loki:
+              {job="paymentflow", level="error"} | json
+                | msg =~ "(?i)payment|transaction|stellar|horizon"

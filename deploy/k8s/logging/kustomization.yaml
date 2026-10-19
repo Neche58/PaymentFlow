@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Centralised log shipping stack — Fluent Bit DaemonSet.
+#
+# Apply with:
+#   kubectl apply -k deploy/k8s/logging
+#
+# Prerequisites:
+#   1. Create the fluent-bit-secrets Secret in the logging namespace
+#      BEFORE applying this overlay:
+#
+#        kubectl create namespace logging
+#        kubectl -n logging create secret generic fluent-bit-secrets \
+#          --from-literal=LOKI_HOST=loki.monitoring.svc.cluster.local \
+#          --from-literal=LOKI_PORT=3100 \
+#          --from-literal=LOKI_USERNAME=paymentflow \
+#          --from-literal=LOKI_PASSWORD=<your-loki-token>
+#
+#   2. Configure Loki retention rules so per-level streams get the
+#      correct retention. Example Loki ruler config (loki-retention-config.yaml):
+#
+#        compactor:
+#          retention_enabled: true
+#        limits_config:
+#          retention_period: 90d   # global maximum (ERROR/WARN)
+#          per_stream_rate_limit: 5MB
+#        ruler:
+#          storage:
+#            type: local
+#          per_tenant_override_config: /etc/loki/retention/rules.yaml
+#
+#      Per-stream retention rules file:
+#        - selector: '{job="paymentflow", level="debug"}'
+#          retention_period: 72h    # 3 days
+#        - selector: '{job="paymentflow", level="info"}'
+#          retention_period: 336h   # 14 days
+#        - selector: '{job="paymentflow", level=~"warn|error"}'
+#          retention_period: 2160h  # 90 days
+
+resources:
+  - fluent-bit-rbac.yaml
+  - fluent-bit-configmap.yaml
+  - fluent-bit-daemonset.yaml
+  - fluent-bit-networkpolicy.yaml
