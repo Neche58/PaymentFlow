@@ -3,7 +3,8 @@
 const lock = require('./distributedLock');
 const logger = require('../utils/logger').child('LeaderElection');
 
-const LEADER_LOCK_KEY = 'scheduler:leader';
+const DEFAULT_JOB_NAME = 'scheduler';
+const LEADER_LOCK_KEY_PREFIX = 'leader:';
 const LEADER_LOCK_TTL_MS = parseInt(process.env.LEADER_LOCK_TTL_MS, 10) || 30_000;
 const LEADER_RENEW_INTERVAL_MS = parseInt(process.env.LEADER_RENEW_INTERVAL_MS, 10) || 15_000;
 const LEADER_ACQUIRE_INTERVAL_MS = parseInt(process.env.LEADER_ACQUIRE_INTERVAL_MS, 10) || 10_000;
@@ -20,6 +21,12 @@ let _renewTimer = null;
 let _acquireTimer = null;
 let _callbacks = { onElected: [], onDemoted: [] };
 let _running = false;
+let _jobName = DEFAULT_JOB_NAME;
+let _workerId = process.env.WORKER_ID || process.env.HOSTNAME || `worker-${process.pid}`;
+
+function getLeaderLockKey(jobName = _jobName) {
+  return `${LEADER_LOCK_KEY_PREFIX}${jobName}`;
+}
 
 function register(onElected, onDemoted) {
   if (typeof onElected === 'function') _callbacks.onElected.push(onElected);
@@ -27,7 +34,7 @@ function register(onElected, onDemoted) {
 }
 
 async function _tryAcquire() {
-  const acquired = await lock.acquire(LEADER_LOCK_KEY, LEADER_LOCK_TTL_MS);
+  const acquired = await lock.acquire(getLeaderLockKey(), LEADER_LOCK_TTL_MS);
   if (acquired && !_isLeader) {
     _isLeader = true;
     _leaderSince = Date.now();
@@ -44,7 +51,7 @@ async function _tryAcquire() {
 
 async function _renew() {
   if (!_isLeader || !_token) return;
-  const renewed = await lock.renew(LEADER_LOCK_KEY, _token, LEADER_LOCK_TTL_MS);
+  const renewed = await lock.renew(getLeaderLockKey(), _token, LEADER_LOCK_TTL_MS);
   if (!renewed) {
     logger.warn('Lost leadership — lock taken by another instance');
     _demote();
@@ -90,8 +97,9 @@ function _stopAcquire() {
   }
 }
 
-async function start() {
+async function start(jobName = DEFAULT_JOB_NAME) {
   if (_running) return;
+  _jobName = jobName || DEFAULT_JOB_NAME;
   _running = true;
 
   const redisEnabled = Boolean(process.env.REDIS_HOST);
@@ -138,7 +146,7 @@ async function stop() {
   if (_isLeader) {
     _demote();
     if (_token) {
-      await lock.release(LEADER_LOCK_KEY, _token);
+      await lock.release(getLeaderLockKey(), _token);
       _token = null;
     }
   }
@@ -160,6 +168,10 @@ function getTenureSeconds() {
   return Math.max(0, (Date.now() - _leaderSince) / 1000);
 }
 
+function getWorkerId() {
+  return _workerId;
+}
+
 module.exports = {
   start,
   stop,
@@ -167,4 +179,7 @@ module.exports = {
   register,
   getFencingToken,
   getTenureSeconds,
+  getWorkerId,
+  getLeaderLockKey,
+  DEFAULT_JOB_NAME,
 };

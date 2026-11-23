@@ -53,6 +53,7 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5000
+            - containerPort: 9090
           env:
             - name: JWT_SECRET
               valueFrom:
@@ -116,6 +117,14 @@ spec:
             successThreshold: 1
 
           # See docs/k8s-resource-sizing.md for sizing rationale.
+          livenessProbe:
+            httpGet:
+              path: /worker/health
+              port: 9090
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 2
           resources:
             requests:
               cpu: "250m"

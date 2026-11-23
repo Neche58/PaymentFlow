@@ -214,6 +214,24 @@ app.get('/api/consistency', requireAdminAuth, runConsistencyCheck);
 app.get('/health', healthCheck);
 app.get('/health/live', healthLive);
 app.get('/health/ready', healthReady);
+app.get('/worker/health', (req, res) => {
+  const { checkLiveness } = require('./services/workerHeartbeat');
+  const liveness = checkLiveness();
+  const now = Date.now();
+  const staleLimitMs = parseInt(process.env.WORKER_HEALTH_STALE_MS || '60000', 10);
+  const staleWorkers = Object.entries(liveness.workers).filter(([, worker]) => {
+    if (worker.lastBeatMs == null) return true;
+    return now - worker.lastBeatMs > staleLimitMs;
+  });
+  const healthy = staleWorkers.length === 0;
+  return res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'healthy' : 'unhealthy',
+    timestamp: new Date().toISOString(),
+    staleLimitMs,
+    staleWorkers: staleWorkers.map(([name]) => name),
+    workers: liveness.workers,
+  });
+});
 
 // Issue #671: OpenAPI/Swagger documentation
 try {
@@ -387,6 +405,13 @@ const PORT = config.PORT;
 const server = require.main === module
   ? app.listen(PORT, () => logger.info(`Server running on port ${PORT}`))
   : { close: (cb) => cb && cb() };
+const workerHealthServer = require.main === module
+  ? require('./workerHealthServer')
+      .createWorkerHealthServer()
+      .listen(parseInt(process.env.WORKER_HEALTH_PORT || '9090', 10), () => {
+        logger.info(`Worker health server running on port ${process.env.WORKER_HEALTH_PORT || '9090'}`);
+      })
+  : null;
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 const {
@@ -453,6 +478,9 @@ async function shutdown(signal) {
     const serverDrainDurationMs = Date.now() - serverCloseStart;
     logger.info('HTTP server drained in-flight requests and closed', { durationMs: serverDrainDurationMs });
     const mongoCloseStart = Date.now();
+    if (workerHealthServer) {
+      workerHealthServer.close();
+    }
     try {
       await mongoose.disconnect();
       const mongoDurationMs = Date.now() - mongoCloseStart;
