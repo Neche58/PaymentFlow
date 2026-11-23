@@ -29,6 +29,10 @@ const { auditContext } = require('../middleware/auditContext');
 const { bulkImportLimiter } = require('../middleware/rateLimiter');
 const streamingCsvUpload = require('../middleware/streamingCsvUpload');
 const { contractPaused } = require('../middleware/contractPaused');
+const {
+  eraseStudentPiiHandler,
+  exportStudentDataHandler,
+} = require('../controllers/retentionController');
 
 router.use(resolveSchool);
 
@@ -58,5 +62,7 @@ router.post('/:studentId/reconcile', requireAdminAuth, auditContext, validateStu
 router.post('/:studentId/reminders/resubscribe', requireAdminAuth, auditContext, validateStudentIdParam, resubscribeReminders);
 router.get('/:studentId/fee-history', requireAdminAuth, validateStudentIdParam, getFeeHistory);
 router.post('/:studentId/credit-adjustments', requireAdminAuth, validateStudentIdParam, auditContext, contractPaused, adjustStudentCredit);
+router.delete('/:studentId/pii', requireAdminAuth, validateStudentIdParam, auditContext, eraseStudentPiiHandler);
+router.get('/:studentId/data-export', requireAdminAuth, validateStudentIdParam, exportStudentDataHandler);
 
 module.exports = router;

@@ -87,4 +87,80 @@ async function previewRetentionHandler(req, res) {
   }
 }
 
-module.exports = { runRetentionHandler, previewRetentionHandler, listDeletionCertificates };
+async function eraseStudentPiiHandler(req, res) {
+  const { studentId } = req.params;
+  const schoolId = req.schoolId;
+  if (!schoolId || !studentId) {
+    return res.status(400).json({ error: 'schoolId and studentId are required', code: 'VALIDATION_ERROR' });
+  }
+
+  const Student = require('../models/studentModel');
+  const student = await Student.findOne({ schoolId, studentId });
+  if (!student) {
+    return res.status(404).json({ error: 'Student not found', code: 'NOT_FOUND' });
+  }
+
+  await logAuditBeforeErasure(schoolId, studentId, req);
+
+  student.name = 'Anonymised';
+  student.parentEmail = null;
+  student.parentPhone = null;
+  student.parentEmailHash = null;
+  student.parentName = null;
+  student.contactNumber = null;
+  student.dateOfBirth = null;
+  student.gender = null;
+  await student.save();
+
+  return res.json({ studentId, anonymised: true });
+}
+
+async function logAuditBeforeErasure(schoolId, studentId, req) {
+  const { logAudit } = require('../services/auditService');
+  await logAudit({
+    schoolId,
+    action: 'STUDENT_PII_ERASURE',
+    performedBy: req.user?.id || req.user?.email || 'admin',
+    targetId: studentId,
+    targetType: 'student',
+    details: { reason: 'right_to_erasure' },
+    result: 'success',
+    ipAddress: req.ip,
+    userAgent: req.headers?.['user-agent'] || null,
+  });
+}
+
+async function exportStudentDataHandler(req, res) {
+  const { studentId } = req.params;
+  const schoolId = req.schoolId;
+  if (!schoolId || !studentId) {
+    return res.status(400).json({ error: 'schoolId and studentId are required', code: 'VALIDATION_ERROR' });
+  }
+
+  const Student = require('../models/studentModel');
+  const Payment = require('../models/paymentModel');
+  const AuditLog = require('../models/auditLogModel');
+  const StudentFeeHistory = require('../models/studentFeeHistoryModel');
+
+  const student = await Student.findOne({ schoolId, studentId }).lean();
+  if (!student) {
+    return res.status(404).json({ error: 'Student not found', code: 'NOT_FOUND' });
+  }
+
+  const [payments, auditLogs, feeHistory] = await Promise.all([
+    Payment.find({ schoolId, studentId }).lean(),
+    AuditLog.find({ schoolId, targetId: studentId }).lean(),
+    StudentFeeHistory.find({ schoolId, studentId }).lean(),
+  ]);
+
+  res.setHeader('Content-Disposition', `attachment; filename="student-${studentId}-data.json"`);
+  return res.json({ student, payments, auditLogs, feeHistory });
+}
+
+module.exports = {
+  runRetentionHandler,
+  previewRetentionHandler,
+  listDeletionCertificates,
+  eraseStudentPiiHandler,
+  exportStudentDataHandler,
+};
