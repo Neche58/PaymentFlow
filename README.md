@@ -842,6 +842,7 @@ PaymentFlow/
 | [`docs/payment-limits.md`](docs/payment-limits.md) | Payment limits configuration |
 | [`docs/security.md`](docs/security.md) | Security model and threat analysis |
 | [`docs/key-rotation.md`](docs/key-rotation.md) | Signer key rotation runbook |
+| [`docs/architecture/payment-state-machine.md`](docs/architecture/payment-state-machine.md) | Canonical payment status transitions |
 | [`docs/WEBHOOK_INTEGRATION.md`](docs/WEBHOOK_INTEGRATION.md) | Webhook setup and HMAC verification |
 | [`docs/idempotency-payment-verification.md`](docs/idempotency-payment-verification.md) | Idempotency key design |
 | [`docs/QUICK_START_DOCKER.md`](docs/QUICK_START_DOCKER.md) | Docker quick start |
