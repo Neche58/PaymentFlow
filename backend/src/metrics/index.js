@@ -468,6 +468,27 @@ const leaderElectionTenureSeconds = new client.Gauge({
   },
 });
 
+// worker_is_leader{worker_id} — the issue-683 metric contract. It mirrors
+// leader_election_is_leader while identifying the replica in Prometheus.
+const workerIsLeader = new client.Gauge({
+  name: 'worker_is_leader',
+  help: 'Whether this worker instance currently holds singleton job leadership (1 = leader, 0 = follower)',
+  labelNames: ['worker_id'],
+  registers: [registry],
+  collect() {
+    try {
+      const leaderElection = require('../services/leaderElection');
+      this.reset();
+      this.set(
+        { worker_id: leaderElection.getWorkerId() },
+        leaderElection.isLeader() ? 1 : 0
+      );
+    } catch (_) {
+      // Leader election may not be wired up in a deployment variant.
+    }
+  },
+});
+
 // last_backup_verification_age_seconds — seconds since the most recent
 // successful backup restore-verification (scripts/test-backup-recovery.sh),
 // recorded via POST /api/internal/backup-verification-heartbeat. Recomputed
@@ -552,6 +573,7 @@ module.exports = {
   horizonUnreachableSince,
   leaderElectionIsLeader,
   leaderElectionTenureSeconds,
+  workerIsLeader,
   lastBackupVerificationAgeSeconds,
   recordBackupVerificationSuccess,
   lastBackupRestoreTestAgeSeconds,
