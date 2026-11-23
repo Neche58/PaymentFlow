@@ -1,5 +1,5 @@
 {
-  "description": "Machine-readable record of (a) high/critical npm audit findings that are deferred rather than fixed (read by scripts/check-dependency-audit.js) and (b) known-safe matches for the repo secret scanner (read by scripts/scan-repo-secrets.js). See docs/dependency-triage.md and docs/security.md for the respective processes.",
+  "description": "Machine-readable record of (a) high/critical npm audit findings that are deferred rather than fixed (read by scripts/check-dependency-audit.js) and (b) known-safe matches for the repo secret scanner (read by scripts/scan-repo-secrets.js). Entries require security review and periodic removal. See SECURITY.md and docs/dependency-triage.md for the exception process.",
   "exceptions": [
     {
       "type": "mnemonic",

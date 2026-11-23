@@ -620,7 +620,8 @@ Common error codes: `NOT_FOUND`, `VALIDATION_ERROR`, `DUPLICATE_TX`, `TX_FAILED`
 - **Proxy trust**: Configurable `TRUSTED_PROXY_HOPS` prevents IP spoofing via `X-Forwarded-For`.
 - **Body size limit**: Configurable `MAX_BODY_SIZE` to prevent request flood attacks.
 
-See [`docs/security.md`](docs/security.md) for a full threat model.
+See [`SECURITY.md`](SECURITY.md) for vulnerability reporting and coordinated
+disclosure, and [`docs/security.md`](docs/security.md) for the full threat model.
 
 ---
 
